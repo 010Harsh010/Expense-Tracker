@@ -5,6 +5,9 @@ import os
 import json
 import datetime
 from typing import Optional
+from typing import Annotated
+from pydantic import Field
+from fastmcp.exceptions import ToolError
 
 load_dotenv()
 
@@ -13,7 +16,7 @@ DATABASE_URL = (
     f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 )
 
-mcp = FastMCP(name="Expense Tracker")
+mcp = FastMCP(name="Expense Tracker",strict_input_validation=True)
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 category_Path = "category.json"
@@ -40,13 +43,21 @@ def init_db():
 init_db()
 
 # -------------------- TOOLS --------------------
-@mcp.tool()
+@mcp.tool(
+    name="add_expanse", description="Add a new expanse record to the database.",
+    tags=["expense", "add"],
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "openWorldHint": True
+    }    
+)
 def add_expanse(
-    amount: int,
-    category: str,
-    subcategory: str = "",
-    note: str = "",
-    date: str = ""
+    amount: Annotated[int,Field(description="The amount of the expanse in integer.")],
+    category: Annotated[str,Field(description="The category of the expanse from the attached Resourse.")],
+    subcategory: Annotated[Optional[str],Field(description="The subcategory of the expanse from the attached Resourse.")] = "",
+    note: Annotated[Optional[str],Field(description="Additional note for the expanse.")] = "",
+    date: Annotated[Optional[str],Field(description="The date of the expanse in YYYY-MM-DD format. If not provided, defaults to today's date.")] = ""
 ):
     """Add a new expanse record to the database."""
 
@@ -58,6 +69,9 @@ def add_expanse(
     """
 
     date = datetime.datetime.strptime(date, "%Y-%m-%d").date() if date!="" else datetime.date.today()
+    
+    if amount < 0:
+        raise ToolError("Amount must be a positive integer.")
     
     with engine.begin() as conn:
         result = conn.execute(
@@ -78,9 +92,21 @@ def add_expanse(
         "date_used": date
     }
 
-@mcp.tool()
-def get_expanse(start_date: str, end_date: str):
+@mcp.tool(
+    name="get_expanse", description="Retrieve expanse records within a date range.",
+    tags=["expense", "get"],
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "openWorldHint": True
+    }
+)
+def get_expanse(start_date: Annotated[str,Field(description="The start date of the range in YYYY-MM-DD format.")] = datetime.date.today().strftime("%Y-%m-%d"), 
+                end_date: Annotated[str,Field(description="The end date of the range in YYYY-MM-DD format.")]= datetime.date.today().strftime("%Y-%m-%d")):
     """Retrieve expanse records within a date range."""
+
+    if start_date > end_date:
+        raise ToolError("Start date must be before end date.")
 
     query = """
     SELECT * FROM expanse
@@ -96,9 +122,20 @@ def get_expanse(start_date: str, end_date: str):
         cols = cur.keys()
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
-@mcp.tool()
-def summirize_expanse(start_date: str, end_date: str, category: str = ""):
+@mcp.tool(
+    name="summirize_expanse", description="Summarize expanse amounts by category.",
+    tags=["expense", "summary"],
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "openWorldHint": True
+    }
+)
+def summirize_expanse(start_date: Annotated[str,Field(description="The start date of the range in YYYY-MM-DD format.")] = datetime.date.today().strftime("%Y-%m-%d"), end_date: Annotated[str,Field(description="The end date of the range in YYYY-MM-DD format.")]= datetime.date.today().strftime("%Y-%m-%d"), category: Annotated[Optional[str],Field(description="The category to filter by. If not provided, summarizes all categories.")] = None):
     """Summarize expanse amounts by category."""
+
+    if start_date > end_date:
+        raise ToolError("Start date must be before end date.")
 
     query = """
     SELECT category, SUM(amount) AS total_amount
@@ -119,8 +156,16 @@ def summirize_expanse(start_date: str, end_date: str, category: str = ""):
         cols = cur.keys()
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
-@mcp.tool()
-def remove_expanse(expanse_id: int):
+@mcp.tool(
+    name="remove_expanse", description="Remove an expanse record by ID.",
+    tags=["expense", "remove"],
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "openWorldHint": True
+    }
+)
+def remove_expanse(expanse_id: Annotated[int,Field(description="The ID of the expanse record to remove.")]):
     """Remove an expanse record by ID."""
 
     query = "DELETE FROM expanse WHERE id = :id"
